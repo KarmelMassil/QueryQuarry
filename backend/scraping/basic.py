@@ -242,17 +242,33 @@ def scrape_walmart(product_name: str) -> Optional[ProductInfo]:
         rating = "N/A"
         review_count = "N/A"
         
-        rating_element = product_soup.find('span', class_='average-rating-stars') 
-        if not rating_element:
-            rating_element = product_soup.find('span', {'itemprop': 'ratingValue'})
-        if rating_element:
-            rating = clean_rating(rating_element.get_text(strip=True))
+        # New selectors based on provided HTML snippet
+        reviews_ratings_div = product_soup.find('div', {'data-testid': 'reviews-and-ratings'})
+        if reviews_ratings_div:
+            # Look for the span containing "4.6 stars out of 287 reviews"
+            rating_review_span = reviews_ratings_div.find('span', class_='w_iUH7')
+            if rating_review_span:
+                full_text = rating_review_span.get_text(strip=True)
+                # Example: "4.6 stars out of 287 reviews"
+                match = re.search(r'([\d.]+) stars out of (\d+) reviews', full_text)
+                if match:
+                    rating = clean_rating(match.group(1))
+                    review_count = clean_review_count(match.group(2))
+                else:
+                    # Fallback to look for rating from text if direct match fails
+                    rating_match = re.search(r'([\d.]+) stars', full_text)
+                    if rating_match:
+                        rating = clean_rating(rating_match.group(1))
             
-        review_count_element = product_soup.find('span', class_='Reviews-count')
-        if not review_count_element:
-            review_count_element = product_soup.find('span', {'itemprop': 'reviewCount'})
-        if review_count_element:
-            review_count = clean_review_count(review_count_element.get_text(strip=True))
+            # Alternative/confirm review count from the <a> tag
+            review_link_element = reviews_ratings_div.find('a', {'data-testid': 'item-review-section-link'})
+            if review_link_element:
+                review_text_from_link = review_link_element.get_text(strip=True)
+                # Example: "287 ratings"
+                review_count_match = re.search(r'(\d+)\s*ratings', review_text_from_link)
+                if review_count_match:
+                    # Prefer this if the span didn't give it or as a confirmation
+                    review_count = clean_review_count(review_count_match.group(1))
 
         return ProductInfo(
             website="Walmart.com",
@@ -266,7 +282,8 @@ def scrape_walmart(product_name: str) -> Optional[ProductInfo]:
     except Exception as e:
         print(f"Error scraping Walmart: {e}")
         return None
-    
+
+        
 def scrape_newegg(product_name: str) -> Optional[ProductInfo]:
     try:
         search_url = f"https://www.newegg.com/p/pl?d={urllib.parse.quote_plus(product_name)}"
@@ -276,43 +293,44 @@ def scrape_newegg(product_name: str) -> Optional[ProductInfo]:
         
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Find first product
-        product_item = soup.find('div', class_='item-container')
-        if not product_item:
-            return None
+        items = soup.select(".item-cell") 
+
+        for item in items:
+            title_tag = item.select_one(".item-title")
+            price_whole = item.select_one(".price-current strong")
+            price_fraction = item.select_one(".price-current sup")
+            rating_tag = item.select_one(".item-rating")
+            rating = rating_tag["title"] if rating_tag and "title" in rating_tag.attrs else "N/A"
+            reviews_element = item.select_one(".item-rating-num")
+            reviews = reviews_element.text.strip("()") if reviews_element else "N/A"
+
+            product_url_relative = title_tag.get('href', '') if title_tag else ''
+            if not product_url_relative.startswith('http'):
+                product_url = "https://www.newegg.com" + product_url_relative
+            else:
+                product_url = product_url_relative
+
+            if title_tag and price_whole and price_fraction:
+                full_price_text = f"{price_whole.text.strip()}{price_fraction.text.strip()}"
+                cleaned_price = clean_price(full_price_text)
+                cleaned_rating = clean_rating(rating)
+                cleaned_review_count = clean_review_count(reviews)
+
+                return ProductInfo(
+                    website="Newegg.com",
+                    title=title_tag.text.strip()[:100],
+                    price=cleaned_price,
+                    rating=cleaned_rating,
+                    review_count=cleaned_review_count,
+                    url=product_url
+                )
         
-        # Get product link
-        link_element = product_item.find('a', class_='item-title')
-        if not link_element:
-            return None
-        
-        product_url = link_element.get('href', '')
-        if not product_url.startswith('http'):
-            product_url = "https://www.newegg.com" + product_url
-        
-        title = link_element.get_text(strip=True)
-        
-        # Price from search results
-        price_element = product_item.find('li', class_='price-current')
-        price = clean_price(price_element.get_text(strip=True)) if price_element else "N/A"
-        
-        # Rating
-        rating_element = product_item.find('span', class_='item-rating-num')
-        rating = clean_rating(rating_element.get_text(strip=True)) if rating_element else "N/A"
-        
-        return ProductInfo(
-            website="Newegg.com",
-            title=title[:100],
-            price=price,
-            rating=rating,
-            review_count="N/A",
-            url=product_url
-        )
-        
+        return None
+
     except Exception as e:
         print(f"Error scraping Newegg: {e}")
         return None
-
+    
 @app.post("/scrape")
 async def scrape_products(request: ScrapeRequest):
     """Scrape products from multiple websites"""
