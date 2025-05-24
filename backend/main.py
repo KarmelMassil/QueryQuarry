@@ -1,37 +1,15 @@
-"""
-# backend/main.py
-from fastapi import FastAPI, Query
-from backend.scraping import basic, llm, firecrawl
-
-app = FastAPI()
-
-@app.get("/")
-def root():
-    return {"message": "Scraper is running"}
-
-@app.get("/scrape/")
-def scrape(product: str = Query(...), method: str = Query(...)):
-    if method == "basic":
-        return basic.scrape(product)
-    elif method == "llm":
-        return llm.scrape(product)
-    elif method == "firecrawl":
-        return firecrawl.scrape(product)
-    else:
-        return {"error": "Invalid method"}
-"""
-from fastapi import FastAPI, Query
 from scraping import basic
-
+from fastapi import FastAPI, Query
 app = FastAPI()
 
-@app.get("/")
-def root():
-    return {"message": "Scraper is running"}
-
 @app.get("/scrape/")
-def scrape(product: str = Query(...), method: str = Query(...)):
+def scrape(product: str = Query(...), method: str = Query(...), site: str = Query("amazon")):
     if method == "basic":
-        return basic.scrape(product)
+        if site == "amazon":
+            return basic.scrape(product)
+        elif site == "newegg":
+            return basic.scrape_newegg(product)
+        else:
+            return {"error": "Unsupported site for basic scraping"}
     else:
         return {"error": "Invalid method"}

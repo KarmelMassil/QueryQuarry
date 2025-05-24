@@ -1,52 +1,32 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+import requests
 from bs4 import BeautifulSoup
-import time
 
-def scrape(product: str):
+def scrape_newegg(product: str):
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
     query = product.replace(" ", "+")
-    url = f"https://www.amazon.com/s?k={query}"
+    url = f"https://www.newegg.com/p/pl?d={query}"
 
-    options = Options()
-    options.add_argument("--headless")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("user-agent=Mozilla/5.0")
+    res = requests.get(url, headers=headers)
+    soup = BeautifulSoup(res.text, "html.parser")
 
-    driver = webdriver.Chrome(options=options)
-    driver.get(url)
+    items = soup.select(".item-cell")
 
-    time.sleep(5)  # wait for JS to load
-    soup = BeautifulSoup(driver.page_source, "html.parser")
-    driver.quit()
+    for item in items:
+        title_tag = item.select_one(".item-title")
+        price_whole = item.select_one(".price-current strong")
+        price_fraction = item.select_one(".price-current sup")
+        rating = item.select_one(".item-rating")  # class="item-rating" with stars
+        reviews = item.select_one(".item-rating-num")
 
-    results = soup.select(".s-main-slot > .s-result-item")
-
-    for item in results:
-        if not item.get("data-asin"):
-            continue
-
-        brand_tag = item.select_one("h2.a-size-mini span.a-size-medium")
-        title_tag = item.select_one("a.a-link-normal h2 span")
-
-        price_whole = item.select_one(".a-price .a-price-whole")
-        price_fraction = item.select_one(".a-price .a-price-fraction")
-        rating = item.select_one(".a-icon-alt")
-        reviews = item.select_one(".s-link-style .s-underline-text")
-
-        # Debug
-        print("BRAND:", brand_tag.text.strip() if brand_tag else "None")
-        print("TITLE:", title_tag.text.strip() if title_tag else "None")
-        print("------")
-
-        if brand_tag and title_tag and price_whole and price_fraction:
-            full_title = f"{brand_tag.text.strip()} {title_tag.text.strip()}"
+        if title_tag and price_whole and price_fraction:
             return {
-                "Website": "Amazon.com",
-                "Title": full_title,
+                "Website": "Newegg.com",
+                "Title": title_tag.text.strip(),
                 "Price (USD)": f"{price_whole.text.strip()}{price_fraction.text.strip()}",
-                "Rating": rating.text.strip() if rating else "N/A",
-                "Reviews": reviews.text.strip() if reviews else "N/A"
+                "Rating": rating["class"][1] if rating and len(rating["class"]) > 1 else "N/A",
+                "Reviews": reviews.text.strip("()") if reviews else "N/A"
             }
 
-    return {"error": "No valid products found"}
+    return {"error": "No valid products found on Newegg"}
