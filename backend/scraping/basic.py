@@ -152,7 +152,7 @@ def scrape_bestbuy(product_name: str) -> Optional[ProductInfo]:
     try:
         search_url = f"https://www.bestbuy.com/site/searchpage.jsp?st={urllib.parse.quote_plus(product_name)}"
         
-        response = requests.get(search_url, headers=get_headers(), timeout=10)
+        response = requests.get(search_url, headers=get_headers(), timeout=20)
         response.raise_for_status()
         
         soup = BeautifulSoup(response.content, 'html.parser')
@@ -206,7 +206,6 @@ def scrape_bestbuy(product_name: str) -> Optional[ProductInfo]:
         return None
 
 def scrape_walmart(product_name: str) -> Optional[ProductInfo]:
-    """Scrape Walmart for product information"""
     try:
         search_url = f"https://www.walmart.com/search?q={urllib.parse.quote_plus(product_name)}"
         
@@ -215,45 +214,60 @@ def scrape_walmart(product_name: str) -> Optional[ProductInfo]:
         
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Find first product (Walmart's structure is complex)
         product_link = soup.find('a', href=re.compile(r'/ip/'))
         if not product_link:
             return None
         
         product_url = "https://www.walmart.com" + product_link.get('href', '')
         
-        # Get product page
         time.sleep(1)
         product_response = requests.get(product_url, headers=get_headers(), timeout=10)
         product_response.raise_for_status()
         
         product_soup = BeautifulSoup(product_response.content, 'html.parser')
         
-        # Extract information (Walmart uses dynamic loading, so this is basic)
-        title_element = product_soup.find('h1')
+        title_element = product_soup.find('h1', {'itemprop': 'name'})
         title = title_element.get_text(strip=True) if title_element else "N/A"
         
-        # Look for price in various locations
         price = "N/A"
-        price_elements = product_soup.find_all(text=re.compile(r'\$\d+'))
-        if price_elements:
-            price = clean_price(price_elements[0])
+        price_element = product_soup.find('span', {'data-automation-id': 'price-display'})
+        if not price_element:
+            price_element = product_soup.find('span', class_='price-characteristic')
+        if not price_element:
+            price_element = product_soup.select_one('[itemprop="price"], .ProductPrice, .e1z8p20s4')
         
+        if price_element:
+            price = clean_price(price_element.get_text(strip=True))
+
+        rating = "N/A"
+        review_count = "N/A"
+        
+        rating_element = product_soup.find('span', class_='average-rating-stars') 
+        if not rating_element:
+            rating_element = product_soup.find('span', {'itemprop': 'ratingValue'})
+        if rating_element:
+            rating = clean_rating(rating_element.get_text(strip=True))
+            
+        review_count_element = product_soup.find('span', class_='Reviews-count')
+        if not review_count_element:
+            review_count_element = product_soup.find('span', {'itemprop': 'reviewCount'})
+        if review_count_element:
+            review_count = clean_review_count(review_count_element.get_text(strip=True))
+
         return ProductInfo(
             website="Walmart.com",
             title=title[:100],
             price=price,
-            rating="N/A",
-            review_count="N/A",
+            rating=rating,
+            review_count=review_count,
             url=product_url
         )
         
     except Exception as e:
         print(f"Error scraping Walmart: {e}")
         return None
-
+    
 def scrape_newegg(product_name: str) -> Optional[ProductInfo]:
-    """Scrape Newegg for product information"""
     try:
         search_url = f"https://www.newegg.com/p/pl?d={urllib.parse.quote_plus(product_name)}"
         
