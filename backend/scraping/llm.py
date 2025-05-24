@@ -186,7 +186,7 @@ def scrape_walmart_llm(product_name: str) -> Optional[ProductInfo]:
 
 def scrape_newegg_llm(product_name: str) -> Optional[ProductInfo]:
     """Scrape Newegg using LLM for data extraction"""
-    
+
     try:
         search_url = f"https://www.newegg.com/p/pl?d={urllib.parse.quote_plus(product_name)}"
         print(f"Searching Newegg: {search_url}")
@@ -221,66 +221,8 @@ def scrape_newegg_llm(product_name: str) -> Optional[ProductInfo]:
         # Convert the first item's HTML to string for LLM processing
         item_html = str(first_item)
         
-        # Create a more specific prompt for Newegg search results
-        prompt = f"""
-        You are extracting product information from a Newegg search result item. The HTML below contains one product item from search results.
-        
-        Look for these specific elements in the HTML:
-        1. Product title: Usually in an element with class "item-title" - extract the text content
-        2. Price: Look for elements with classes "price-current", often split between "strong" (dollars) and "sup" (cents) tags
-        3. Rating: Look for elements with class "item-rating" and extract the "title" attribute which contains the rating
-        4. Review count: Look for elements with class "item-rating-num" - extract the number inside parentheses
-        
-        HTML Content:
-        {item_html}
-        
-        Please respond with ONLY a valid JSON object in this exact format:
-        {{
-            "title": "product title here",
-            "price": "$XX.XX",
-            "rating": "X.X",
-            "review_count": "XXX"
-        }}
-        
-        If any information is not found, use "N/A" as the value.
-        Do not include any explanations or additional text, just the JSON.
-        """
-        
-        try:
-            response = model.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=0.1,
-                    max_output_tokens=500,
-                )
-            )
-            
-            llm_response = response.text.strip()
-            
-            # Clean the response to ensure it's valid JSON
-            if llm_response.startswith('```json'):
-                llm_response = llm_response.replace('```json', '').replace('```', '').strip()
-            elif llm_response.startswith('```'):
-                llm_response = llm_response.replace('```', '').strip()
-            
-            # Parse the JSON response
-            extracted_data = json.loads(llm_response)
-            
-            return ProductInfo(
-                website="Newegg.com",
-                title=extracted_data.get("title", "N/A")[:100],
-                price=extracted_data.get("price", "N/A"),
-                rating=extracted_data.get("rating", "N/A"),
-                review_count=extracted_data.get("review_count", "N/A"),
-                url=product_url
-            )
-            
-        except json.JSONDecodeError:
-            print(f"Invalid JSON from Gemini for Newegg: {llm_response}")
-            return None
-        except Exception as e:
-            print(f"Error with Gemini extraction for Newegg: {e}")
-            return None
+         # Use LLM to extract information
+        return extract_with_llm(item_html, "Newegg.com", product_url)
         
     except Exception as e:
         print(f"Error scraping Newegg with LLM: {e}")
@@ -301,16 +243,13 @@ async def scrape_products(request: ScrapeRequest):
             )
         
         results = []
-        """
+
         scrapers = [
             ("Amazon", scrape_amazon_llm),
             ("Walmart", scrape_walmart_llm),
             ("Newegg", scrape_newegg_llm)
         ]
-        """
-        scrapers = [
-            ("Newegg", scrape_newegg_llm)
-        ]
+        
         for name, scraper_func in scrapers:
             try:
                 print(f"Starting {name} scraping...")
