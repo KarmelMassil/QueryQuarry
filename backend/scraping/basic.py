@@ -17,7 +17,8 @@ def scrape_newegg(product: str):
         title_tag = item.select_one(".item-title")
         price_whole = item.select_one(".price-current strong")
         price_fraction = item.select_one(".price-current sup")
-        rating = item.select_one(".item-rating")  # class="item-rating" with stars
+        rating_tag = item.select_one(".item-rating")
+        rating = rating_tag["title"] if rating_tag and "title" in rating_tag.attrs else "N/A"
         reviews = item.select_one(".item-rating-num")
 
         if title_tag and price_whole and price_fraction:
@@ -25,7 +26,7 @@ def scrape_newegg(product: str):
                 "Website": "Newegg.com",
                 "Title": title_tag.text.strip(),
                 "Price (USD)": f"{price_whole.text.strip()}{price_fraction.text.strip()}",
-                "Rating": rating["class"][1] if rating and len(rating["class"]) > 1 else "N/A",
+                "Rating": rating,
                 "Reviews": reviews.text.strip("()") if reviews else "N/A"
             }
 
