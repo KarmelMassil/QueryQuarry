@@ -147,64 +147,6 @@ def scrape_amazon(product_name: str) -> Optional[ProductInfo]:
         print(f"Error scraping Amazon: {e}")
         return None
 
-def scrape_bestbuy(product_name: str) -> Optional[ProductInfo]:
-    """Scrape Best Buy for product information"""
-    try:
-        search_url = f"https://www.bestbuy.com/site/searchpage.jsp?st={urllib.parse.quote_plus(product_name)}"
-        
-        response = requests.get(search_url, headers=get_headers(), timeout=20)
-        response.raise_for_status()
-        
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Find first product
-        product_item = soup.find('li', class_='sku-item')
-        if not product_item:
-            return None
-        
-        # Get product link
-        link_element = product_item.find('a', class_='image-link')
-        if not link_element:
-            return None
-        
-        product_url = "https://www.bestbuy.com" + link_element.get('href', '')
-        
-        # Get product page
-        time.sleep(1)
-        product_response = requests.get(product_url, headers=get_headers(), timeout=10)
-        product_response.raise_for_status()
-        
-        product_soup = BeautifulSoup(product_response.content, 'html.parser')
-        
-        # Extract information
-        title_element = product_soup.find('h1', class_='heading-5')
-        title = title_element.get_text(strip=True) if title_element else "N/A"
-        
-        # Price
-        price_element = product_soup.find('span', class_='sr-only')
-        price = clean_price(price_element.get_text(strip=True)) if price_element else "N/A"
-        
-        # Rating
-        rating_element = product_soup.find('p', class_='visually-hidden')
-        rating = clean_rating(rating_element.get_text(strip=True)) if rating_element else "N/A"
-        
-        # Review count
-        review_element = product_soup.find('button', class_='c-button-unstyled')
-        review_count = clean_review_count(review_element.get_text(strip=True)) if review_element else "N/A"
-        
-        return ProductInfo(
-            website="BestBuy.com",
-            title=title[:100],
-            price=price,
-            rating=rating,
-            review_count=review_count,
-            url=product_url
-        )
-        
-    except Exception as e:
-        print(f"Error scraping Best Buy: {e}")
-        return None
-
 def scrape_walmart(product_name: str) -> Optional[ProductInfo]:
     try:
         search_url = f"https://www.walmart.com/search?q={urllib.parse.quote_plus(product_name)}"
@@ -340,7 +282,6 @@ async def scrape_products(request: ScrapeRequest):
     results = []
     scrapers = [
         ("Amazon", scrape_amazon),
-        ("BestBuy", scrape_bestbuy),
         ("Walmart", scrape_walmart),
         ("Newegg", scrape_newegg)
     ]
