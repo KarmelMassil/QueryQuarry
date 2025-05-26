@@ -100,7 +100,7 @@ class LLMScraper:
             return None
 
     def scrape_amazon(self, product_name: str) -> Optional[Dict]:
-        """Scrape Amazon using LLM for data extraction"""
+        """Scrape Amazon using LLM to extract from search results page directly"""
         try:
             search_url = f"https://www.amazon.com/s?k={urllib.parse.quote_plus(product_name)}"
             print(f"Searching Amazon: {search_url}")
@@ -109,61 +109,220 @@ class LLMScraper:
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Find the first product result
+            # Find the first product result container (same as basic scraper)
             product_container = soup.find('div', {'data-component-type': 's-search-result'})
             if not product_container:
+                print("No product container found on Amazon search page")
                 return None
             
-            # Get product link
+            # Convert just the first product container to HTML string for LLM
+            product_html = str(product_container)
+            print(f"Found Amazon product container, sending to LLM")
+            
+            # Extract product URL for reference
             link_element = product_container.find('a', class_='a-link-normal')
-            if not link_element:
-                return None
+            product_url = search_url  # Default fallback
+            if link_element:
+                href = link_element.get('href', '')
+                if href:
+                    product_url = "https://www.amazon.com" + href
             
-            product_url = "https://www.amazon.com" + link_element.get('href', '')
-            
-            # Get product page
-            time.sleep(1)  # Be respectful
-            product_response = requests.get(product_url, headers=self.headers, timeout=10)
-            product_response.raise_for_status()
-            
-            product_soup = BeautifulSoup(product_response.content, 'html.parser')
-            
-            # Use LLM to extract information from the actual product page
-            return self.extract_with_llm(str(product_soup), "Amazon.com", product_url)
+            # Use LLM to extract information from the product container HTML
+            return self.extract_from_search_container(product_html, "Amazon.com", product_url)
             
         except Exception as e:
             print(f"Error scraping Amazon with LLM: {e}")
             return None
 
+    def extract_from_search_container(self, container_html: str, website_name: str, product_url: str) -> Optional[Dict]:
+        """Use Gemini to extract product information from a single search result container"""
+        try:
+            prompt = f"""
+            You are extracting product information from a single search result container from {website_name}.
+            
+            This HTML represents ONE product from search results. Extract these 4 pieces of information:
+            
+            1. TITLE: Product name/title
+            - Look for <h2> tags or spans with product titles
+            - Often in elements with classes like "s-title-text" or similar
+            - Get the full product name
+            
+            2. PRICE: Current price
+            - Look for price information in spans or divs
+            - May be in elements with "price" in the class name
+            - Format as $XX.XX if possible
+            - Sometimes split between dollars and cents
+            
+            3. RATING: Star rating (e.g., 4.2 out of 5)
+            - Look for rating information, often in spans with "a-icon-alt"
+            - May contain text like "4.2 out of 5 stars"
+            - Extract just the number
+            
+            4. REVIEW COUNT: Number of reviews/ratings
+            - Look for review counts, often in parentheses or links
+            - May be near rating information
+            - Extract just the number
+            
+            HTML Container:
+            {container_html}
+            
+            Return ONLY this JSON:
+            {{
+                "title": "product title",
+                "price": "$XX.XX",
+                "rating": "X.X", 
+                "review_count": "XXXX"
+            }}
+            
+            Use "N/A" if any information is not found. No explanations.
+            """
+            
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=500,
+                )
+            )
+            
+            llm_response = response.text.strip()
+            print(f"LLM Response: {llm_response}")
+            
+            # Clean the response
+            if llm_response.startswith('```json'):
+                llm_response = llm_response.replace('```json', '').replace('```', '').strip()
+            elif llm_response.startswith('```'):
+                llm_response = llm_response.replace('```', '').strip()
+            
+            # Parse JSON
+            try:
+                extracted_data = json.loads(llm_response)
+            except json.JSONDecodeError as e:
+                print(f"JSON decode error: {e}")
+                print(f"Raw LLM response: {llm_response}")
+                return None
+            
+            return {
+                "website": website_name,
+                "title": extracted_data.get("title", "N/A")[:100],
+                "price": extracted_data.get("price", "N/A"),
+                "rating": extracted_data.get("rating", "N/A"),
+                "review_count": extracted_data.get("review_count", "N/A"),
+                "url": product_url
+            }
+            
+        except Exception as e:
+            print(f"Error with Gemini extraction: {e}")
+            return None
+
     def scrape_walmart(self, product_name: str) -> Optional[Dict]:
-        """Scrape Walmart using LLM for data extraction"""
+        """Scrape Walmart using LLM for data extraction from search results"""
         try:
             search_url = f"https://www.walmart.com/search?q={urllib.parse.quote_plus(product_name)}"
+            print(f"Searching Walmart: {search_url}")
             
-            response = requests.get(search_url, headers=self.headers, timeout=10)
+            response = requests.get(search_url, headers=self.headers, timeout=15)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
+            # Find first product link (similar to basic scraper)
             product_link = soup.find('a', href=re.compile(r'/ip/'))
             if not product_link:
+                print("No product link found on Walmart search page")
                 return None
             
             product_url = "https://www.walmart.com" + product_link.get('href', '')
+            print(f"Found Walmart product URL: {product_url}")
             
-            time.sleep(1)
-            product_response = requests.get(product_url, headers=self.headers, timeout=10)
+            time.sleep(2)  # Increased delay for Walmart
+            product_response = requests.get(product_url, headers=self.headers, timeout=15)
             product_response.raise_for_status()
             
-            # Use LLM to extract information
-            return self.extract_with_llm(product_response.text, "Walmart.com", product_url)
+            # Use improved LLM extraction for Walmart
+            return self.extract_with_llm_walmart(product_response.text, "Walmart.com", product_url)
             
         except Exception as e:
             print(f"Error scraping Walmart with LLM: {e}")
             return None
 
+    def extract_with_llm_walmart(self, html_content: str, website_name: str, product_url: str) -> Optional[Dict]:
+        """Extract Walmart product info using LLM with improved price detection"""
+        try:
+            # Use more HTML content for Walmart since price might be deeper in the page
+            truncated_html = html_content[:40000] if len(html_content) > 40000 else html_content
+            
+            prompt = f"""
+            Extract product information from this Walmart product page HTML. Walmart prices can be tricky to find.
+            
+            IMPORTANT - For PRICE specifically, look for these patterns:
+            - Spans or divs with classes containing "price", "cost", "amount"
+            - Elements with data attributes like data-automation-id="product-price"
+            - Price information in <span> tags with dollar signs
+            - Current/sale prices (not original/crossed-out prices)
+            - Prices in formats like $XX.XX, $X.XX, or even just numbers with $ symbols
+            - Look in multiple sections - header, main content, sidebar
+            - Check for both integer and decimal prices (some show $25, others $25.99)
+            
+            For other fields:
+            1. TITLE: Main product name (often in <h1> with itemprop="name" or data-automation-id)
+            2. RATING: Star rating number (look for rating spans, may be in format like "4.5 out of 5")
+            3. REVIEW COUNT: Number of reviews/ratings (often in parentheses or separate spans)
+            
+            HTML Content:
+            {truncated_html}
+            
+            Return this exact JSON format:
+            {{
+                "title": "exact product title",
+                "price": "$XX.XX",
+                "rating": "X.X",
+                "review_count": "XXXX"
+            }}
+            
+            CRITICAL: If you find ANY price information (even partial), include it. Use "N/A" only if absolutely no price data exists.
+            """
+            
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=0.1,
+                    max_output_tokens=600,
+                )
+            )
+            
+            llm_response = response.text.strip()
+            print(f"Walmart LLM Response: {llm_response}")
+            
+            # Clean the response
+            if llm_response.startswith('```'):
+                llm_response = re.sub(r'```(?:json)?', '', llm_response).strip()
+            
+            try:
+                extracted_data = json.loads(llm_response)
+            except json.JSONDecodeError as e:
+                print(f"Walmart JSON decode error: {e}")
+                print(f"Raw response: {llm_response}")
+                return None
+            
+            result = {
+                "website": website_name,
+                "title": extracted_data.get("title", "N/A")[:100],
+                "price": extracted_data.get("price", "N/A"),
+                "rating": extracted_data.get("rating", "N/A"),
+                "review_count": extracted_data.get("review_count", "N/A"),
+                "url": product_url
+            }
+            
+            print(f"Walmart extraction result: {result}")
+            return result
+            
+        except Exception as e:
+            print(f"Error with Walmart LLM extraction: {e}")
+            return None
+
     def scrape_newegg(self, product_name: str) -> Optional[Dict]:
-        """Scrape Newegg using LLM for data extraction"""
+        """Scrape Newegg using LLM for data extraction from search results"""
         try:
             search_url = f"https://www.newegg.com/p/pl?d={urllib.parse.quote_plus(product_name)}"
             print(f"Searching Newegg: {search_url}")
@@ -173,33 +332,30 @@ class LLMScraper:
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Find the first product item using the same approach as basic scraping
-            items = soup.select(".item-cell")
-            
-            if not items:
-                print("No product items found on Newegg search page")
-                return None
-            
-            # Get the first item
-            first_item = items[0]
+            # Find first product (similar to basic scraper)
+            first_product = soup.find('div', class_='item-cell')
+            if not first_product:
+                first_product = soup.find('div', class_=re.compile(r'item-container|list-item'))
+                if not first_product:
+                    print("No product found on Newegg search page")
+                    return None
             
             # Get product URL for reference
-            title_tag = first_item.select_one(".item-title")
-            product_url = ""
+            title_tag = first_product.select_one(".item-title")
+            product_url = search_url  # Default fallback
             if title_tag:
-                product_url_relative = title_tag.get('href', '')
-                if not product_url_relative.startswith('http'):
-                    product_url = "https://www.newegg.com" + product_url_relative
-                else:
-                    product_url = product_url_relative
+                href = title_tag.get('href', '')
+                if href:
+                    if not href.startswith('http'):
+                        product_url = "https://www.newegg.com" + href
+                    else:
+                        product_url = href
             
-            print(f"Found Newegg product in search results")
+            # Convert product container to HTML for LLM
+            product_html = str(first_product)
+            print(f"Found Newegg product container, sending to LLM")
             
-            # Convert the first item's HTML to string for LLM processing
-            item_html = str(first_item)
-            
-             # Use LLM to extract information
-            return self.extract_with_llm(item_html, "Newegg.com", product_url)
+            return self.extract_from_search_container(product_html, "Newegg.com", product_url)
             
         except Exception as e:
             print(f"Error scraping Newegg with LLM: {e}")
@@ -241,3 +397,36 @@ class LLMScraper:
                 print(f"Scraper exception: {result}")
         
         return results
+
+    # Debug method to help troubleshoot Walmart price extraction
+    def debug_walmart_price(self, product_name: str):
+        """Debug method to see what HTML content is being sent to LLM for Walmart"""
+        try:
+            search_url = f"https://www.walmart.com/search?q={urllib.parse.quote_plus(product_name)}"
+            response = requests.get(search_url, headers=self.headers, timeout=15)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            product_link = soup.find('a', href=re.compile(r'/ip/'))
+            
+            if product_link:
+                product_url = "https://www.walmart.com" + product_link.get('href', '')
+                time.sleep(2)
+                product_response = requests.get(product_url, headers=self.headers, timeout=15)
+                product_response.raise_for_status()
+                
+                # Save a portion of the HTML to see what we're working with
+                html_sample = product_response.text[:5000]
+                print("=== WALMART HTML SAMPLE (first 5000 chars) ===")
+                print(html_sample)
+                print("=== END SAMPLE ===")
+                
+                # Look for price-related elements manually
+                soup = BeautifulSoup(product_response.content, 'html.parser')
+                price_elements = soup.find_all(text=re.compile(r'\$\d+'))
+                print(f"\nFound {len(price_elements)} potential price elements:")
+                for i, elem in enumerate(price_elements[:10]):  # Show first 10
+                    print(f"{i+1}: {elem.strip()}")
+                    
+        except Exception as e:
+            print(f"Debug error: {e}")
